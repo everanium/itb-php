@@ -1,0 +1,35 @@
+{
+    "name": "everanium/libitb3",
+    "description": "ITB Symmetric Cipher Construction with Ambiguity-Based Security - PHP",
+    "type": "library",
+    "license": "Apache-2.0",
+    "keywords": ["cryptography", "encryption", "cipher", "symmetric", "aead"],
+    "homepage": "https://github.com/everanium/itb",
+    "readme": "README.md",
+    "authors": [
+        {
+            "name": "Andrey Kuvshinov",
+            "email": "andrew@encloud.blue",
+            "role": "Developer"
+        }
+    ],
+    "support": {
+        "issues": "https://github.com/everanium/itb/issues",
+        "source": "https://github.com/everanium/itb"
+    },
+    "require": {
+        "php": ">=7.4",
+        "ext-ffi": "*"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^9.6 || ^10 || ^11 || ^12"
+    },
+    "autoload": {
+        "psr-4": {
+            "Everanium\\Itb3\\": "src/"
+        }
+    },
+    "scripts": {
+        "test": "phpunit --bootstrap autoload.php tests"
+    }
+}
