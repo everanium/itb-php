@@ -106,9 +106,9 @@ function bench_case(string $name, int $size, callable $fn): void
 
 function main(): void
 {
-    // Bench-scale allocation churn leaks Go scratch heap unboundedly
-    // without a soft memory cap + aggressive GC; the return values
-    // report the previous settings, not an error.
+    // Bench-scale allocation churn grows the Go scratch heap
+    // unboundedly without a soft memory cap + aggressive GC; the
+    // return values report the previous settings, not an error.
     Itb::setMemoryLimit(4 << 30);
     Itb::setGcPercent(100);
 
@@ -181,7 +181,7 @@ function main(): void
     unset($slice);
     $pipe->free();
 
-    // Whole-buffer stream: one FFI round trip through
+    // One-shot stream: one FFI round trip through
     // encryptStreamOneShot / decryptStreamOneShot per iteration.
     $pipe = Itb::create(profile_name('ITB_STREAM_PROFILE', 'streaming-noaead-triple-v1'), build_opts());
     foreach (SIZES as $size) {

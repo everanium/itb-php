@@ -14,9 +14,9 @@ dispatched at first use. Every hash-name / MAC-name / cipher-name /
 profile-name is an opaque string passed through to Go for validation;
 the binding carries no ITB construction logic. The public surface is
 the `Itb` facade (`create` / `load` / `loadF` / `inspect` /
-`register` / `lookup` / `profiles` / `version` and the Go runtime
+`register` / `lookup` / `profiles` / `version` / `drbgAutoTier` and the Go runtime
 knobs), a `Pipeline` class (save / saveF / rekey /
-maxWorkers / close, Single Message encrypt / decrypt, whole-buffer
+maxWorkers / close, Single Message encrypt / decrypt, one-shot
 and incremental stream sessions), and the `StreamEncryptor` /
 `StreamDecryptor` session classes.
 
@@ -74,7 +74,9 @@ preprocessor-free copy of the generated `dist/<os>-<arch>/libitb3.h`
 ## Usage example
 
 ```php
-require 'bindings/php/autoload.php';
+require 'vendor/autoload.php';
+// In-repo checkout without composer:
+// require 'bindings/php/autoload.php';
 
 use Everanium\Itb3\Itb;
 
@@ -112,6 +114,23 @@ $rotated = $sender->rekey(str_repeat("\x11", 32), str_repeat("\x22", 32));
 $receiver = Itb::load($rotated);
 ```
 
+`Pipeline` and the stream sessions free their Go-side handles on
+garbage collection via `__destruct`; an explicit `free()` releases
+them deterministically. For streaming, `encryptStream()` /
+`decryptStream()` open incremental sessions exposing `write` / `end`
+/ `read` / `drainAll` / `isFinished` for caller-driven loops; the
+`encryptStreamOneShot` / `decryptStreamOneShot` calls cover
+streaming wires in a single call each. A live session holds a
+reference to its parent `Pipeline`, so the parent cannot be
+collected out from under it. All byte inputs and outputs are plain
+PHP byte-strings.
+
+Profile names, opts keys, and every primitive name are validated by
+the Go side; a rejected string throws
+`Everanium\Itb3\ItbException` carrying the status code
+(`Everanium\Itb3\Status` constants, via `getStatus()`) plus the
+`ITB_LastError` diagnostic (via `getDetail()`).
+
 ## Persisting sessions
 
 The blob is self-describing: it carries the profile record (mode,
@@ -140,6 +159,12 @@ same name before opening. Attempting to `load` such a blob through
 this binding throws `ItbException` with
 `Status::RECIPE_PRIMITIVE_UNKNOWN`.
 
+**Runtime tuning.** `Pipeline::maxWorkers($n)` sets the worker cap on
+a live Pipeline (`n <= 0` selects auto, values above 256 are
+clamped). The cap is per-machine tuning and is never written to the
+blob, so the receiver may pick its own worker cap after `load`. The
+`maxWorkers` opts key sets the same cap at `create`.
+
 ## Profile registry
 
 ```php
@@ -164,30 +189,6 @@ argument. Every rule — name pattern, reserved prefixes, field
 constraints, primitive names — is enforced by libitb3; a duplicate
 name throws `Status::PROFILE_EXISTS`.
 
-## Runtime tuning
-
-`Pipeline::maxWorkers($n)` sets the worker cap on a live Pipeline
-(`n <= 0` selects auto, values above 256 are clamped). The cap is
-per-machine tuning and is never written to the blob, so the receiver
-may pick its own worker cap after `load`. The `maxWorkers` opts key
-sets the same cap at `create`.
-
-`Pipeline` and the stream sessions free their Go-side handles on
-garbage collection via `__destruct`; an explicit `free()` releases
-them deterministically. For streaming, `encryptStream()` /
-`decryptStream()` open incremental sessions exposing `write` / `end`
-/ `read` / `drainAll` / `isFinished` for caller-driven loops; the
-`encryptStreamOneShot` / `decryptStreamOneShot` calls cover
-whole-buffer streaming wires in a single call each. A live session holds a reference to its
-parent `Pipeline`, so the parent cannot be collected out from under
-it. All byte inputs and outputs are plain PHP byte-strings.
-
-Profile names, opts keys, and every primitive name are validated by
-the Go side; a rejected string throws
-`Everanium\Itb3\ItbException` carrying the status code
-(`Everanium\Itb3\Status` constants, via `getStatus()`) plus the
-`ITB_LastError` diagnostic (via `getDetail()`).
-
 ## Memory
 
 Two process-wide knobs constrain Go runtime arena pacing, readable at
@@ -201,8 +202,8 @@ Itb::setGcPercent(100);
 ```
 
 Large payloads pass through PHP strings, so the PHP-side
-`memory_limit` must accommodate plaintext plus wire copies; the bench
-and eitb entry points lift it via `ini_set('memory_limit', '-1')`.
+`memory_limit` must accommodate plaintext plus wire copies; the bench,
+eitb and loop entry points lift it via `ini_set('memory_limit', '-1')`.
 
 ## Testing
 
@@ -228,11 +229,14 @@ suite lives in Go under the shipped tree.
 ./bindings/php/run_bench.sh
 ```
 
-Micro-benches: `encryptMessage` and stream-session encrypt throughput
-at 1 MiB / 16 MiB / 64 MiB. Shape and budget are driven by env vars
-(`ITB_PROFILE`, `ITB_INNER_HASH`, `ITB_KEY_BITS`, `ITB_NONCE_BITS`,
-`ITB_WITH_PARALLAX`, `ITB_WITH_WRAPPER`, `ITB_BENCH_MIN_SEC`); the
-script pins the same defaults as the root Go BENCH3.md table.
+Micro-benches: `encryptMessage`, stream-session encrypt and
+one-shot stream throughput at 1 MiB / 16 MiB / 64 MiB. Shape and
+budget are driven by env vars (`ITB_PROFILE`, `ITB_INNER_HASH`,
+`ITB_KEY_BITS`, `ITB_NONCE_BITS`, `ITB_WITH_PARALLAX`,
+`ITB_WITH_WRAPPER`, `ITB_BENCH_MIN_SEC`); the script pins the same
+defaults as the root Go BENCH3.md table. See
+[`bindings/BENCH.md`](https://github.com/everanium/itb/blob/main/bindings/BENCH.md)
+for the fleet-wide configuration authority and comparison tables.
 
 ## itb3 CLI
 
@@ -244,6 +248,27 @@ payloads directly on disk (`-i` / `-o`) or through stdin / stdout,
 rotates outer masters, and inspects stored blobs. See
 [`cmd/itb3/README.md`](https://github.com/everanium/itb/blob/main/cmd/itb3/README.md) for the full
 subcommand reference.
+
+## loop utility
+
+A long-run stress harness under `bindings/php/loop/` holds one
+Pipeline handle for minutes, cycles encrypt → decrypt → compare
+round-trips through it, rotates the outer masters and reopens the
+handle from its session blob on a schedule, and reports whether the
+process survived with every byte intact. It is the binding-side
+counterpart of the Go harness under `tools/loop`: same flags, same
+round structure, same summary in both renderings.
+
+```bash
+./bindings/php/build.sh
+./bindings/php/run_loop.sh --duration 2m --shape both
+```
+
+`./bindings/php/run_loop.sh -h` lists every flag. Concurrency mode:
+**single** — the PHP CLI SAPI is one thread around one interpreter and
+a stock build ships no thread primitive, so `--goroutines` above 1 is
+clamped to 1 and the summary reports the effective count next to the
+requested one.
 
 ## eitb utility
 

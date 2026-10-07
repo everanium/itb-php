@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 #
-# build.sh -- one-step build for the PHP binding's libitb3.so
-# dependency. Prerequisites (Go, PHP 7.4+ with the FFI extension
-# available) must be installed separately; see README.md
-# "Prerequisites" section.
+# One-step build for the PHP binding's libitb3.so dependency.
+# Prerequisites (Go, PHP 7.4+ with the FFI extension available) must be
+# installed separately; see README.md "Prerequisites" section.
 #
 # Every artefact this binding owns is removed before the build, so
 # nothing in the tree predates the invocation.
@@ -150,14 +149,14 @@ go build -trimpath "${TAGS[@]}" -buildmode=c-shared \
     -o dist/linux-amd64/libitb3.so ./cmd/cshared
 
 cd "$REPO_ROOT/bindings/php"
-echo "==> lint-checking the PHP sources, the tests, the bench and eitb"
-for d in src tests bench eitb; do
+echo "==> lint-checking the PHP sources, the tests, the bench, eitb and loop"
+for d in src tests bench eitb loop; do
     if [[ ! -d "$d" ]]; then
         echo "build.sh: expected directory '$d' is missing" >&2
         exit 1
     fi
 done
-find src tests bench eitb -name '*.php' -print0 | while IFS= read -r -d '' f; do
+find src tests bench eitb loop -name '*.php' -print0 | while IFS= read -r -d '' f; do
     php -l "$f" > /dev/null
 done
 php -l autoload.php > /dev/null
